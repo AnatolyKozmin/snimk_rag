@@ -68,8 +68,11 @@ async def lifespan(app: FastAPI):
     )
     app.state.session_factory = session_factory
 
-    # Эмбеддинги
-    embedding_service = EmbeddingService(settings.EMBEDDING_MODEL)
+    # Эмбеддинги (загрузка в потоке, чтобы не блокировать бота)
+    loop = asyncio.get_event_loop()
+    embedding_service = await loop.run_in_executor(
+        None, lambda: EmbeddingService(settings.EMBEDDING_MODEL)
+    )
     app.state.embedding_service = embedding_service
 
     # FAISS индекс
@@ -139,8 +142,7 @@ async def run_bot_task():
         logger.warning("TELEGRAM_BOT_TOKEN not set, bot disabled")
         return
 
-    # Ждём запуска API
-    await asyncio.sleep(3)
+    logger.info("Telegram bot starting...")
     api_url = f"http://127.0.0.1:{settings.API_PORT}"
     from bot.telegram_bot import run_bot
 
