@@ -24,12 +24,10 @@ from vectorstore.faiss_index import FAISSIndex
 from api.routes import router as api_router
 from admin.admin_routes import router as admin_router
 
-# Настройка логирования
-logging.basicConfig(
-    level=getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO),
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)],
-)
+# Настройка логирования (должно быть до импорта app)
+from core.logging_config import setup_logging
+
+setup_logging(service_name="api")
 logger = logging.getLogger(__name__)
 
 

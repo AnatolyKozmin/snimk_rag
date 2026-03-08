@@ -11,11 +11,9 @@ import sys
 from core.config import settings
 from bot.telegram_bot import run_bot
 
-logging.basicConfig(
-    level=getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO),
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)],
-)
+from core.logging_config import setup_logging
+
+setup_logging(service_name="bot")
 logger = logging.getLogger(__name__)
 
 if __name__ == "__main__":
