@@ -2,7 +2,7 @@
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, Response
 from pydantic import BaseModel
 
 from services.normalizer import normalize_question
@@ -21,6 +21,12 @@ async def health(request: Request):
     """Проверка готовности сервиса."""
     ready = getattr(request.app.state, "ready", False)
     return {"status": "ready" if ready else "loading", "ready": ready}
+
+
+@router.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    """Пустой favicon, чтобы убрать 404 в консоли."""
+    return Response(status_code=204)
 
 
 class AskRequest(BaseModel):

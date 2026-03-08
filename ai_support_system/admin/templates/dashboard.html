@@ -178,21 +178,28 @@ document.querySelectorAll('.tab').forEach(tab => {
 });
 
 async function loadExport() {
-    const res = await fetch(API_BASE + '/admin/export');
-    const data = await res.json();
-    document.getElementById('export-preview').textContent = JSON.stringify(data, null, 2);
+    const el = document.getElementById('export-preview');
+    try {
+        const res = await fetch(API_BASE + '/admin/export');
+        const data = await res.json().catch(() => ({}));
+        el.textContent = res.ok ? JSON.stringify(data, null, 2) : ('Ошибка: ' + (data.detail || res.status));
+    } catch (e) {
+        el.textContent = 'Ошибка загрузки: ' + (e.message || 'Сеть недоступна');
+    }
 }
 
-document.getElementById('export-btn').onclick = () => {
-    fetch(API_BASE + '/admin/export')
-        .then(r => r.json())
-        .then(data => {
-            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-            const a = document.createElement('a');
-            a.href = URL.createObjectURL(blob);
-            a.download = 'faq_export.json';
-            a.click();
-        });
+document.getElementById('export-btn').onclick = async () => {
+    try {
+        const res = await fetch(API_BASE + '/admin/export');
+        const data = await res.json().catch(() => ({}));
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'faq_export.json';
+        a.click();
+    } catch (e) {
+        alert('Ошибка: ' + (e.message || 'Сеть недоступна'));
+    }
 };
 
 document.getElementById('import-form').onsubmit = async (e) => {

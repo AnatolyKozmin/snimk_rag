@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     # Telegram
     TELEGRAM_BOT_TOKEN: str = ""
     TELEGRAM_ADMIN_IDS: str = ""  # comma-separated user IDs
+    API_URL: str = "http://127.0.0.1:8000"  # URL API для бота (в Docker: http://faq_api:8000)
 
     # Database
     DATABASE_URL: str = "sqlite+aiosqlite:///./data/faq.db"

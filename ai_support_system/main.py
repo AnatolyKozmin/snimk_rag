@@ -149,34 +149,12 @@ def create_app() -> FastAPI:
 
 app = create_app()
 
-
-async def run_bot_task():
-    """Запуск Telegram бота в фоне."""
-    if not settings.TELEGRAM_BOT_TOKEN:
-        logger.warning("TELEGRAM_BOT_TOKEN not set, bot disabled")
-        return
-
-    logger.info("Telegram bot starting...")
-    api_url = f"http://127.0.0.1:{settings.API_PORT}"
-    from bot.telegram_bot import run_bot
-
-    await run_bot(settings.TELEGRAM_BOT_TOKEN, api_url)
-
-
 if __name__ == "__main__":
     import uvicorn
 
-    async def run_all():
-        """Запуск API и бота параллельно."""
-        config = uvicorn.Config(
-            app,
-            host=settings.API_HOST,
-            port=settings.API_PORT,
-            log_level="info",
-        )
-        server = uvicorn.Server(config)
-        api_task = asyncio.create_task(server.serve())
-        bot_task = asyncio.create_task(run_bot_task())
-        await asyncio.gather(api_task, bot_task)
-
-    asyncio.run(run_all())
+    uvicorn.run(
+        "main:app",
+        host=settings.API_HOST,
+        port=settings.API_PORT,
+        log_level="info",
+    )

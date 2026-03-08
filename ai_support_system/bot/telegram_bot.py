@@ -75,6 +75,14 @@ def create_bot(token: str, api_url: str) -> tuple[Bot, Dispatcher]:
                     question[:50],
                 )
 
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 503:
+                await message.answer(
+                    "Сервис загружается, попробуйте через минуту."
+                )
+            else:
+                logger.exception("API request failed: %s", e)
+                await message.answer("Временная ошибка сервиса. Попробуйте позже.")
         except httpx.HTTPError as e:
             logger.exception("API request failed: %s", e)
             await message.answer(

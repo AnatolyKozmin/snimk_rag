@@ -1,9 +1,9 @@
 version: "3.8"
 
 services:
-  faq_app:
+  faq_api:
     build: .
-    container_name: faq_telegram_assistant
+    container_name: faq_api
     ports:
       - "8009:8000"
     volumes:
@@ -12,7 +12,6 @@ services:
       - API_HOST=0.0.0.0
       - API_PORT=8000
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
-      - TELEGRAM_ADMIN_IDS=${TELEGRAM_ADMIN_IDS:-}
       - DATABASE_URL=sqlite+aiosqlite:///./data/faq.db
       - FAISS_INDEX_PATH=./data/faiss_index.bin
       - SIMILARITY_THRESHOLD=0.8
@@ -24,3 +23,14 @@ services:
           memory: 4G
         reservations:
           memory: 2G
+
+  faq_bot:
+    build: .
+    container_name: faq_bot
+    command: ["python", "run_bot.py"]
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - API_URL=http://faq_api:8000
+    depends_on:
+      - faq_api
+    restart: unless-stopped
