@@ -1,0 +1,229 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="tabs">
+    <span class="tab active" data-tab="pending">Ожидающие вопросы</span>
+    <span class="tab" data-tab="import">Импорт FAQ</span>
+    <span class="tab" data-tab="export">Экспорт FAQ</span>
+</div>
+
+<div id="pending-tab" class="tab-content">
+    <div class="card">
+        <h2>Кластеры похожих вопросов</h2>
+        <div id="clusters"></div>
+    </div>
+    <div class="card">
+        <h2>Отдельные вопросы</h2>
+        <div id="ungrouped"></div>
+    </div>
+    <div id="answer-form" class="card hidden">
+        <h2>Добавить ответ</h2>
+        <p><strong>Вопрос:</strong> <span id="selected-question"></span></p>
+        <textarea id="answer-text" placeholder="Введите ответ..."></textarea>
+        <div style="margin-top: 12px;">
+            <button id="submit-answer">Сохранить ответ</button>
+            <button class="btn btn-secondary" id="cancel-answer">Отмена</button>
+        </div>
+        <input type="hidden" id="selected-type" value="">
+        <input type="hidden" id="selected-id" value="">
+        <input type="hidden" id="selected-questions" value="">
+    </div>
+</div>
+
+<div id="import-tab" class="tab-content hidden">
+    <div class="card">
+        <h2>Импорт из Excel / CSV</h2>
+        <p>Загрузите файл с FAQ. Формат: <strong>колонка 1 = вопрос</strong>, <strong>колонка 2 = ответ</strong>.</p>
+        <p>Поддерживаются: .xlsx (Excel), .csv (в т.ч. экспорт из Google Таблиц).</p>
+        <form id="import-form">
+            <input type="file" id="import-file" accept=".xlsx,.xls,.csv" required style="margin: 12px 0;">
+            <label style="display: block; margin: 8px 0;">
+                <input type="checkbox" id="import-clear" name="clear"> Очистить базу перед импортом
+            </label>
+            <button type="submit" id="import-btn">Импортировать</button>
+        </form>
+        <div id="import-result" class="meta" style="margin-top: 12px;"></div>
+    </div>
+</div>
+
+<div id="export-tab" class="tab-content hidden">
+    <div class="card">
+        <h2>Экспорт базы FAQ</h2>
+        <button id="export-btn">Скачать JSON</button>
+        <pre id="export-preview" style="margin-top: 16px; max-height: 400px; overflow: auto; font-size: 12px;"></pre>
+    </div>
+    <div class="card">
+        <h2>Пересборка индекса</h2>
+        <p>Пересобрать FAISS индекс из базы данных (при рассинхронизации).</p>
+        <button id="rebuild-btn">Пересобрать индекс</button>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const API_BASE = '';
+
+async function loadPending() {
+    const res = await fetch(API_BASE + '/admin/pending');
+    const data = await res.json();
+    
+    const clustersEl = document.getElementById('clusters');
+    const ungroupedEl = document.getElementById('ungrouped');
+    
+    if (data.clusters.length === 0 && data.ungrouped.length === 0) {
+        clustersEl.innerHTML = '<div class="empty">Нет ожидающих вопросов</div>';
+        ungroupedEl.innerHTML = '';
+        return;
+    }
+    
+    clustersEl.innerHTML = data.clusters.map(c => `
+        <div class="question cluster">
+            <strong>Кластер (${c.count} похожих):</strong>
+            ${c.questions.map(q => `<div class="meta">• ${q.question}</div>`).join('')}
+            <button class="answer-cluster-btn" data-questions='${JSON.stringify(c.questions.map(x => x.question))}'>
+                Ответить
+            </button>
+        </div>
+    `).join('');
+    
+    ungroupedEl.innerHTML = data.ungrouped.map(q => `
+        <div class="question">
+            ${q.question}
+            <div class="meta">ID: ${q.id} | ${q.created_at ? new Date(q.created_at).toLocaleString('ru') : ''}</div>
+            <button class="answer-btn" data-id="${q.id}" data-question="${q.question.replace(/"/g, '&quot;')}">
+                Ответить
+            </button>
+        </div>
+    `).join('');
+    
+    document.querySelectorAll('.answer-btn').forEach(btn => {
+        btn.onclick = () => {
+            document.getElementById('answer-form').classList.remove('hidden');
+            document.getElementById('selected-question').textContent = btn.dataset.question;
+            document.getElementById('selected-type').value = 'single';
+            document.getElementById('selected-id').value = btn.dataset.id;
+            document.getElementById('selected-questions').value = '';
+            document.getElementById('answer-text').value = '';
+        };
+    });
+    
+    document.querySelectorAll('.answer-cluster-btn').forEach(btn => {
+        btn.onclick = () => {
+            const questions = JSON.parse(btn.dataset.questions);
+            document.getElementById('answer-form').classList.remove('hidden');
+            document.getElementById('selected-question').textContent = questions.join(' | ');
+            document.getElementById('selected-type').value = 'cluster';
+            document.getElementById('selected-id').value = '';
+            document.getElementById('selected-questions').value = JSON.stringify(questions);
+            document.getElementById('answer-text').value = '';
+        };
+    });
+}
+
+document.getElementById('submit-answer').onclick = async () => {
+    const answer = document.getElementById('answer-text').value.trim();
+    const type = document.getElementById('selected-type').value;
+    const id = document.getElementById('selected-id').value;
+    const questionsJson = document.getElementById('selected-questions').value;
+    
+    if (!answer) return alert('Введите ответ');
+    
+    let url, body, method = 'POST';
+    if (type === 'single') {
+        url = `/admin/answer/pending/${id}`;
+        body = new FormData();
+        body.append('answer', answer);
+    } else {
+        url = '/admin/answer/cluster';
+        body = JSON.stringify({ cluster_id: 0, questions: JSON.parse(questionsJson || '[]'), answer });
+        method = 'POST';
+    }
+    
+    try {
+        const opts = type === 'single' 
+            ? { method, body } 
+            : { method, body, headers: { 'Content-Type': 'application/json' } };
+        const res = await fetch(API_BASE + url, opts);
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data.success) {
+            document.getElementById('answer-form').classList.add('hidden');
+            loadPending();
+        } else {
+            const err = Array.isArray(data.detail) ? data.detail.map(d => d.msg || d).join(', ') : (data.detail || data.message || res.statusText || 'Unknown');
+            alert('Ошибка: ' + err);
+        }
+    } catch (e) {
+        alert('Ошибка: ' + e.message);
+    }
+};
+
+document.getElementById('cancel-answer').onclick = () => {
+    document.getElementById('answer-form').classList.add('hidden');
+};
+
+document.querySelectorAll('.tab').forEach(tab => {
+    tab.onclick = () => {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
+        tab.classList.add('active');
+        if (tab.dataset.tab === 'pending') {
+            document.getElementById('pending-tab').classList.remove('hidden');
+        } else if (tab.dataset.tab === 'import') {
+            document.getElementById('import-tab').classList.remove('hidden');
+        } else {
+            document.getElementById('export-tab').classList.remove('hidden');
+            loadExport();
+        }
+    };
+});
+
+async function loadExport() {
+    const res = await fetch(API_BASE + '/admin/export');
+    const data = await res.json();
+    document.getElementById('export-preview').textContent = JSON.stringify(data, null, 2);
+}
+
+document.getElementById('export-btn').onclick = () => {
+    fetch(API_BASE + '/admin/export')
+        .then(r => r.json())
+        .then(data => {
+            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = 'faq_export.json';
+            a.click();
+        });
+};
+
+document.getElementById('import-form').onsubmit = async (e) => {
+    e.preventDefault();
+    const fileInput = document.getElementById('import-file');
+    const clear = document.getElementById('import-clear').checked;
+    const resultEl = document.getElementById('import-result');
+    if (!fileInput.files.length) return alert('Выберите файл');
+    const formData = new FormData();
+    formData.append('file', fileInput.files[0]);
+    formData.append('clear', clear);
+    resultEl.textContent = 'Импорт...';
+    try {
+        const res = await fetch(API_BASE + '/admin/import', { method: 'POST', body: formData });
+        const data = await res.json().catch(() => ({}));
+        resultEl.textContent = res.ok && data.success ? `Импортировано ${data.count} записей` : ('Ошибка: ' + (data.detail || 'Unknown'));
+    } catch (e) {
+        resultEl.textContent = 'Ошибка: ' + e.message;
+    }
+};
+
+document.getElementById('rebuild-btn').onclick = async () => {
+    try {
+        const res = await fetch(API_BASE + '/admin/rebuild-index', { method: 'POST' });
+        const data = await res.json();
+        alert(data.success ? `Индекс пересобран: ${data.count || 0} записей` : ('Ошибка: ' + data.message));
+    } catch (e) {
+        alert('Ошибка: ' + e.message);
+    }
+};
+
+loadPending();
+</script>
+{% endblock %}

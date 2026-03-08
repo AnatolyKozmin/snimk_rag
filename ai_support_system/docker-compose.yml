@@ -1,0 +1,26 @@
+version: "3.8"
+
+services:
+  faq_app:
+    build: .
+    container_name: faq_telegram_assistant
+    ports:
+      - "8009:8000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_ADMIN_IDS=${TELEGRAM_ADMIN_IDS:-}
+      - DATABASE_URL=sqlite+aiosqlite:///./data/faq.db
+      - FAISS_INDEX_PATH=./data/faiss_index.bin
+      - SIMILARITY_THRESHOLD=0.8
+      - LOG_LEVEL=INFO
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 2G
