@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     # FAISS
     FAISS_INDEX_PATH: str = "./data/faiss_index.bin"
     EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
+    EMBEDDING_DIMENSION: int = 384  # all-MiniLM-L6-v2
 
     # Thresholds
     SIMILARITY_THRESHOLD: float = 0.8

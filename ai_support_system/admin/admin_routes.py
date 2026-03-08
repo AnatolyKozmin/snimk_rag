@@ -56,9 +56,6 @@ async def get_pending_questions(request: Request):
     Получить pending вопросы с кластеризацией.
     """
     pending_service = request.app.state.pending_service
-    embedding_service = request.app.state.embedding_service
-    clustering_service = request.app.state.clustering_service
-
     pending_list = await pending_service.get_pending(include_answered=False)
 
     if not pending_list:
@@ -70,6 +67,22 @@ async def get_pending_questions(request: Request):
             }
         )
 
+    # Без кластеризации, если модель ещё не загружена
+    if not getattr(request.app.state, "ready", False):
+        ungrouped = [
+            {
+                "id": p.id,
+                "question": p.question,
+                "created_at": p.created_at.isoformat() if p.created_at else None,
+            }
+            for p in pending_list
+        ]
+        return JSONResponse(
+            content={"clusters": [], "ungrouped": ungrouped, "total": len(pending_list)}
+        )
+
+    embedding_service = request.app.state.embedding_service
+    clustering_service = request.app.state.clustering_service
     questions = [p.question for p in pending_list]
     embeddings = embedding_service.embed_batch(questions)
     clusters_raw = clustering_service.cluster(embeddings, questions)

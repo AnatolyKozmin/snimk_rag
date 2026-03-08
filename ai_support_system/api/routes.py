@@ -1,12 +1,26 @@
 """API маршруты."""
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from services.normalizer import normalize_question
 
 router = APIRouter()
+
+
+@router.get("/", include_in_schema=False)
+async def root():
+    """Редирект на админ-панель."""
+    return RedirectResponse(url="/admin", status_code=302)
+
+
+@router.get("/health")
+async def health(request: Request):
+    """Проверка готовности сервиса."""
+    ready = getattr(request.app.state, "ready", False)
+    return {"status": "ready" if ready else "loading", "ready": ready}
 
 
 class AskRequest(BaseModel):
@@ -43,6 +57,12 @@ async def ask_question(
     Обработка вопроса пользователя.
     Возвращает ответ из FAQ или статус pending.
     """
+    if not getattr(request.app.state, "ready", False):
+        raise HTTPException(
+            status_code=503,
+            detail="Сервис загружается, попробуйте через минуту.",
+        )
+
     faq_service = request.app.state.faq_service
     pending_service = request.app.state.pending_service
 

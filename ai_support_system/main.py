@@ -53,10 +53,28 @@ async def rebuild_faiss_index(session_factory, embedding_service, faiss_index):
     logger.info("FAISS index rebuilt with %d entries", len(entries))
 
 
+async def _background_init(app: FastAPI):
+    """Фоновая загрузка модели и пересборка индекса."""
+    try:
+        embedding_service = app.state.embedding_service
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, embedding_service._ensure_loaded)
+        faiss_index = app.state.faiss_index
+        session_factory = app.state.session_factory
+        if faiss_index.ntotal == 0:
+            await rebuild_faiss_index(session_factory, embedding_service, faiss_index)
+    except Exception as e:
+        logger.exception("Background init failed: %s", e)
+    finally:
+        app.state.ready = True
+        logger.info("Application fully ready")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Жизненный цикл приложения."""
     logger.info("Starting application...")
+    app.state.ready = False
 
     # Директория для данных
     settings.DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -68,22 +86,17 @@ async def lifespan(app: FastAPI):
     )
     app.state.session_factory = session_factory
 
-    # Эмбеддинги (загрузка в потоке, чтобы не блокировать бота)
-    loop = asyncio.get_event_loop()
-    embedding_service = await loop.run_in_executor(
-        None, lambda: EmbeddingService(settings.EMBEDDING_MODEL)
-    )
+    # Эмбеддинги (ленивая загрузка — сервер стартует сразу)
+    embedding_service = EmbeddingService(settings.EMBEDDING_MODEL)
     app.state.embedding_service = embedding_service
 
-    # FAISS индекс
+    # FAISS индекс (размерность без загрузки модели)
     faiss_path = Path(settings.FAISS_INDEX_PATH)
     faiss_index = FAISSIndex(
         dimension=embedding_service.dimension,
         index_path=faiss_path,
     )
-    loaded = faiss_index.load()
-    if not loaded:
-        await rebuild_faiss_index(session_factory, embedding_service, faiss_index)
+    faiss_index.load()
     app.state.faiss_index = faiss_index
 
     # Сервисы
@@ -106,7 +119,8 @@ async def lifespan(app: FastAPI):
         min_samples=settings.CLUSTERING_MIN_SAMPLES,
     )
 
-    logger.info("Application started")
+    asyncio.create_task(_background_init(app))
+    logger.info("Application started (model loading in background)")
     yield
 
     # Shutdown
