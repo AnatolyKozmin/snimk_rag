@@ -12,3 +12,6 @@ README.md
 .env.test.local
 .env.production.local
 
+# Кэш моделей (скачивается вручную)
+ai_support_system/model_cache/
+

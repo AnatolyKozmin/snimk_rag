@@ -8,6 +8,7 @@ services:
       - "8009:8000"
     volumes:
       - ./data:/app/data
+      - ./model_cache:/root/.cache/huggingface:ro
     environment:
       - API_HOST=0.0.0.0
       - API_PORT=8000
