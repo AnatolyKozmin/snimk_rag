@@ -15,7 +15,7 @@ services:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
       - DATABASE_URL=sqlite+aiosqlite:///./data/faq.db
       - FAISS_INDEX_PATH=./data/faiss_index.bin
-      - SIMILARITY_THRESHOLD=0.8
+      - SIMILARITY_THRESHOLD=${SIMILARITY_THRESHOLD:-0.75}
       - USE_LLM_RAG=true
       - HF_HOME=/root/.cache/huggingface
       - LOG_LEVEL=INFO
