@@ -42,6 +42,8 @@ class Settings(BaseSettings):
     # Paths
     DATA_DIR: Path = Path("./data")
     LOG_LEVEL: str = "INFO"
+    # Файл для автоимпорта при старте (faq.xlsx в корне проекта)
+    INITIAL_FAQ_FILE: str = "faq.xlsx"
 
     class Config:
         env_file = ".env"

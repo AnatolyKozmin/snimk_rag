@@ -51,21 +51,89 @@ async def rebuild_faiss_index(session_factory, embedding_service, faiss_index):
     logger.info("FAISS index rebuilt with %d entries", len(entries))
 
 
-async def _background_init(app: FastAPI):
-    """Фоновая загрузка модели и пересборка индекса."""
+async def _import_initial_faq(app: FastAPI) -> int:
+    """Автоимпорт FAQ из Excel при старте. Возвращает количество импортированных записей."""
+    from services.faq_loader import load_faq_from_bytes
+
+    project_root = Path(__file__).parent
+    # Порядок: data, faq_import (volumes в Docker), корень проекта
+    candidates = [
+        settings.DATA_DIR / "faq.xlsx",
+        settings.DATA_DIR / "faq.csv",
+        project_root / "faq_import" / "faq.xlsx",
+        project_root / "faq_import" / "faq.csv",
+        project_root / settings.INITIAL_FAQ_FILE,
+        project_root / "faq.xlsx",
+        project_root / "faq.csv",
+    ]
+    faq_path = None
+    for p in candidates:
+        if p.exists():
+            faq_path = p
+            break
+
+    if not faq_path:
+        logger.info("Автоимпорт: файл faq.xlsx/faq.csv не найден, пропуск")
+        return 0
+
+    logger.info("Автоимпорт: найден файл %s", faq_path)
     try:
+        content = faq_path.read_bytes()
+        pairs = load_faq_from_bytes(content, faq_path.name)
+    except Exception as e:
+        logger.error("Автоимпорт: ошибка чтения файла: %s", e)
+        return 0
+
+    if not pairs:
+        logger.warning("Автоимпорт: файл пуст или неверный формат")
+        return 0
+
+    logger.info("Автоимпорт: загружено %d пар Q/A, начинаю добавление в FAQ", len(pairs))
+    learning_service = app.state.learning_service
+    faq_service = app.state.faq_service
+
+    for i, (question, answer) in enumerate(pairs, 1):
+        try:
+            await learning_service.add_qa(question, answer)
+            if i % 10 == 0 or i == len(pairs):
+                logger.info("Автоимпорт: добавлено %d/%d записей", i, len(pairs))
+        except Exception as e:
+            logger.error("Автоимпорт: ошибка в строке %d (%s): %s", i, question[:50], e)
+
+    faq_service.invalidate_cache()
+    logger.info("Автоимпорт: завершён, импортировано %d записей", len(pairs))
+    return len(pairs)
+
+
+async def _background_init(app: FastAPI):
+    """Фоновая загрузка модели, пересборка индекса и автоимпорт FAQ."""
+    try:
+        logger.info("Фоновая инициализация: загрузка модели эмбеддингов...")
         embedding_service = app.state.embedding_service
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, embedding_service._ensure_loaded)
+        logger.info("Фоновая инициализация: модель загружена")
+
         faiss_index = app.state.faiss_index
         session_factory = app.state.session_factory
+
         if faiss_index.ntotal == 0:
+            logger.info("Фоновая инициализация: FAISS индекс пуст, пересборка из БД...")
             await rebuild_faiss_index(session_factory, embedding_service, faiss_index)
+        else:
+            logger.info("Фоновая инициализация: FAISS индекс загружен (%d векторов)", faiss_index.ntotal)
+
+        # Автоимпорт FAQ из Excel
+        imported = await _import_initial_faq(app)
+        if imported > 0:
+            logger.info("Фоновая инициализация: после импорта пересобираю FAISS индекс")
+            await rebuild_faiss_index(session_factory, embedding_service, faiss_index)
+
     except Exception as e:
-        logger.exception("Background init failed: %s", e)
+        logger.exception("Фоновая инициализация: ошибка: %s", e)
     finally:
         app.state.ready = True
-        logger.info("Application fully ready")
+        logger.info("Фоновая инициализация: завершена, сервис готов")
 
 
 @asynccontextmanager
