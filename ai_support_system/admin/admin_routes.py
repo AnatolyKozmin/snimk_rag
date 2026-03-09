@@ -41,6 +41,20 @@ class ClusterAnswerRequest(BaseModel):
     answer: str
 
 
+class GenerateVariationsRequest(BaseModel):
+    """Запрос на генерацию вариаций вопроса."""
+
+    question: str
+    answer: str
+    n: int = 3
+
+
+class AddFaqBatchRequest(BaseModel):
+    """Запрос на добавление нескольких Q/A."""
+
+    items: List[dict]  # [{"question": "...", "answer": "..."}, ...]
+
+
 @router.get("", response_class=HTMLResponse)
 async def admin_dashboard(request: Request):
     """Главная страница админ-панели."""
@@ -238,6 +252,82 @@ async def submit_cluster_answer(request: Request, body: ClusterAnswerRequest):
             "faq_entry_id": entry.id,
             "message": "Ответ добавлен для всего кластера",
         }
+    )
+
+
+@router.get("/faq", response_class=JSONResponse)
+async def get_faq_list(request: Request):
+    """Список всех FAQ записей."""
+    faq_service = request.app.state.faq_service
+    entries = await faq_service.get_all_entries()
+    data = [
+        {
+            "id": e.id,
+            "question": e.question,
+            "answer": e.answer,
+            "created_at": e.created_at.isoformat() if e.created_at else None,
+        }
+        for e in entries
+    ]
+    return JSONResponse(content={"faq": data, "total": len(data)})
+
+
+@router.post("/faq/generate-variations", response_class=JSONResponse)
+async def generate_variations(request: Request, body: GenerateVariationsRequest):
+    """
+    Сгенерировать вариации вопроса через LLM.
+    Требуется USE_LLM_RAG=true и загруженная модель Qwen.
+    """
+    llm_service = getattr(request.app.state, "llm_service", None)
+    if not llm_service:
+        raise HTTPException(
+            status_code=503,
+            detail="LLM не включён. Установите USE_LLM_RAG=true в .env",
+        )
+
+    if not body.question.strip() or not body.answer.strip():
+        raise HTTPException(status_code=400, detail="Question and answer required")
+
+    import asyncio
+
+    loop = asyncio.get_event_loop()
+    try:
+        variations = await loop.run_in_executor(
+            None,
+            lambda: llm_service.generate_question_variations(
+                body.question.strip(),
+                body.answer.strip(),
+                n=min(body.n, 5),
+            ),
+        )
+    except Exception as e:
+        logger.exception("LLM generate variations failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return JSONResponse(content={"variations": variations})
+
+
+@router.post("/faq/add-batch", response_class=JSONResponse)
+async def add_faq_batch(request: Request, body: AddFaqBatchRequest):
+    """Добавить несколько Q/A в FAQ."""
+    learning_service = request.app.state.learning_service
+    faq_service = request.app.state.faq_service
+
+    if not body.items:
+        raise HTTPException(status_code=400, detail="items required")
+
+    added = 0
+    for item in body.items:
+        q = (item.get("question") or "").strip()
+        a = (item.get("answer") or "").strip()
+        if q and a:
+            await learning_service.add_qa(q, a)
+            added += 1
+
+    faq_service.invalidate_cache()
+
+    return JSONResponse(
+        content={"success": True, "message": f"Добавлено {added} записей", "count": added}
     )
 
 

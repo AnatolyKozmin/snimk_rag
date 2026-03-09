@@ -2,6 +2,7 @@
 {% block content %}
 <div class="tabs">
     <span class="tab active" data-tab="pending">Ожидающие вопросы</span>
+    <span class="tab" data-tab="faq">База FAQ</span>
     <span class="tab" data-tab="import">Импорт FAQ</span>
     <span class="tab" data-tab="export">Экспорт FAQ</span>
 </div>
@@ -26,6 +27,27 @@
         <input type="hidden" id="selected-type" value="">
         <input type="hidden" id="selected-id" value="">
         <input type="hidden" id="selected-questions" value="">
+    </div>
+</div>
+
+<div id="faq-tab" class="tab-content hidden">
+    <div class="card">
+        <h2>Все вопросы в базе</h2>
+        <div id="faq-list"></div>
+    </div>
+    <div class="card">
+        <h2>Добавить вопрос вручную</h2>
+        <input type="text" id="new-question" placeholder="Вопрос" style="width: 100%; padding: 10px; margin-bottom: 8px;">
+        <textarea id="new-answer" placeholder="Ответ" style="min-height: 60px; margin-bottom: 8px;"></textarea>
+        <button id="add-manual-btn">Добавить</button>
+    </div>
+    <div id="variations-panel" class="card hidden">
+        <h2>Сгенерированные вариации</h2>
+        <p class="meta">Вопрос: <span id="var-source-question"></span></p>
+        <p class="meta">Ответ: <span id="var-source-answer"></span></p>
+        <div id="variations-list" style="margin: 12px 0;"></div>
+        <button id="add-selected-btn">Добавить выбранные</button>
+        <button class="btn btn-secondary" id="close-variations-btn">Закрыть</button>
     </div>
 </div>
 
@@ -168,6 +190,9 @@ document.querySelectorAll('.tab').forEach(tab => {
         tab.classList.add('active');
         if (tab.dataset.tab === 'pending') {
             document.getElementById('pending-tab').classList.remove('hidden');
+        } else if (tab.dataset.tab === 'faq') {
+            document.getElementById('faq-tab').classList.remove('hidden');
+            loadFaq();
         } else if (tab.dataset.tab === 'import') {
             document.getElementById('import-tab').classList.remove('hidden');
         } else {
@@ -176,6 +201,141 @@ document.querySelectorAll('.tab').forEach(tab => {
         }
     };
 });
+
+let variationsContext = { question: '', answer: '', generated: [] };
+
+function escapeHtml(s) {
+    const d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+}
+
+async function loadFaq() {
+    const el = document.getElementById('faq-list');
+    try {
+        const res = await fetch(API_BASE + '/admin/faq');
+        const data = await res.json();
+        if (!res.ok) {
+            el.innerHTML = '<div class="empty">Ошибка: ' + (data.detail || res.status) + '</div>';
+            return;
+        }
+        if (!data.faq || data.faq.length === 0) {
+            el.innerHTML = '<div class="empty">База пуста. Добавьте вопросы через импорт или вручную.</div>';
+            return;
+        }
+        el.innerHTML = data.faq.map(e => {
+            const faqEnc = encodeURIComponent(JSON.stringify({ q: e.question || '', a: e.answer || '' }));
+            return `
+            <div class="faq-item question" data-id="${e.id}">
+                <div class="faq-q">${escapeHtml(e.question)}</div>
+                <details class="meta" style="margin-top: 6px;">
+                    <summary>Ответ</summary>
+                    <div style="margin-top: 6px; white-space: pre-wrap;">${escapeHtml(e.answer)}</div>
+                </details>
+                <button class="gen-var-btn" data-faq="${faqEnc}">Сгенерировать вариации</button>
+            </div>
+        `}).join('');
+        document.querySelectorAll('.gen-var-btn').forEach(btn => {
+            btn.onclick = () => {
+                try {
+                    const { q, a } = JSON.parse(decodeURIComponent(btn.dataset.faq || '{}'));
+                    generateVariations(q, a);
+                } catch (_) {}
+            };
+        });
+    } catch (e) {
+        el.innerHTML = '<div class="empty">Ошибка: ' + (e.message || 'Сеть недоступна') + '</div>';
+    }
+}
+
+async function generateVariations(question, answer) {
+    const panel = document.getElementById('variations-panel');
+    const listEl = document.getElementById('variations-list');
+    document.getElementById('var-source-question').textContent = question;
+    document.getElementById('var-source-answer').textContent = answer.length > 80 ? answer.slice(0, 80) + '...' : answer;
+    variationsContext = { question, answer };
+    listEl.innerHTML = '<span class="meta">Генерация...</span>';
+    panel.classList.remove('hidden');
+    try {
+        const res = await fetch(API_BASE + '/admin/faq/generate-variations', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ question, answer, n: 3 })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            listEl.innerHTML = '<span class="meta" style="color: #c00;">Ошибка: ' + (data.detail || res.status) + '</span>';
+            return;
+        }
+        const vars = data.variations || [];
+        if (vars.length === 0) {
+            listEl.innerHTML = '<span class="meta">Вариации не сгенерированы</span>';
+            return;
+        }
+        variationsContext.generated = vars;
+        listEl.innerHTML = vars.map((v, i) => `
+            <label class="var-item" style="display: block; margin: 8px 0; padding: 8px; background: #f8f9fa; border-radius: 4px;">
+                <input type="checkbox" class="var-cb" data-idx="${i}"> ${escapeHtml(v)}
+            </label>
+        `).join('');
+    } catch (e) {
+        listEl.innerHTML = '<span class="meta" style="color: #c00;">Ошибка: ' + (e.message || 'Сеть') + '</span>';
+    }
+}
+
+document.getElementById('add-selected-btn').onclick = async () => {
+    const checked = document.querySelectorAll('.var-cb:checked');
+    if (checked.length === 0) return alert('Выберите хотя бы один вопрос');
+    const items = Array.from(checked).map(cb => ({
+        question: variationsContext.generated[parseInt(cb.dataset.idx, 10)] || '',
+        answer: variationsContext.answer
+    })).filter(x => x.question);
+    try {
+        const res = await fetch(API_BASE + '/admin/faq/add-batch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ items })
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+            document.getElementById('variations-panel').classList.add('hidden');
+            loadFaq();
+            alert('Добавлено: ' + data.count);
+        } else {
+            alert('Ошибка: ' + (data.detail || data.message || 'Unknown'));
+        }
+    } catch (e) {
+        alert('Ошибка: ' + e.message);
+    }
+};
+
+document.getElementById('close-variations-btn').onclick = () => {
+    document.getElementById('variations-panel').classList.add('hidden');
+};
+
+document.getElementById('add-manual-btn').onclick = async () => {
+    const q = document.getElementById('new-question').value.trim();
+    const a = document.getElementById('new-answer').value.trim();
+    if (!q || !a) return alert('Введите вопрос и ответ');
+    try {
+        const res = await fetch(API_BASE + '/admin/faq/add-batch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ items: [{ question: q, answer: a }] })
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+            document.getElementById('new-question').value = '';
+            document.getElementById('new-answer').value = '';
+            loadFaq();
+            alert('Добавлено');
+        } else {
+            alert('Ошибка: ' + (data.detail || data.message || 'Unknown'));
+        }
+    } catch (e) {
+        alert('Ошибка: ' + e.message);
+    }
+};
 
 async function loadExport() {
     const el = document.getElementById('export-preview');

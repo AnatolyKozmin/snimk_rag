@@ -118,6 +118,67 @@ class LLMService:
         response = self._tokenizer.decode(output_ids[0], skip_special_tokens=True)
         return response.strip()
 
+    def generate_question_variations(
+        self,
+        question: str,
+        answer: str,
+        n: int = 3,
+        max_new_tokens: int = 150,
+        temperature: float = 0.8,
+    ) -> List[str]:
+        """
+        Сгенерировать альтернативные формулировки вопроса.
+        Возвращает список вариаций (без оригинала).
+        """
+        self._ensure_loaded()
+
+        prompt = f"""Вопрос: {question}
+Ответ: {answer}
+
+Напиши {n} других способов задать этот же вопрос (разговорным языком). Только вопросы, по одному на строку, без нумерации."""
+
+        messages = [
+            {"role": "system", "content": "Ты помощник. Отвечай только списком вопросов, по одному на строку."},
+            {"role": "user", "content": prompt},
+        ]
+
+        import torch
+
+        text = self._tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+
+        inputs = self._tokenizer([text], return_tensors="pt").to(self._model.device)
+
+        with torch.no_grad():
+            out = self._model.generate(
+                **inputs,
+                max_new_tokens=max_new_tokens,
+                temperature=temperature,
+                do_sample=True,
+                pad_token_id=self._tokenizer.eos_token_id,
+                top_p=0.9,
+                repetition_penalty=1.1,
+            )
+
+        response = self._tokenizer.decode(
+            out[0][inputs["input_ids"].shape[1] :], skip_special_tokens=True
+        )
+        lines = [l.strip() for l in response.split("\n") if l.strip()]
+
+        cleaned: List[str] = []
+        for line in lines:
+            if line.startswith(("-", "•", "*")):
+                line = line[1:].strip()
+            elif line and line[0].isdigit() and "." in line[:3]:
+                line = line.split(".", 1)[-1].strip()
+            if line and line != question and len(line) > 5:
+                cleaned.append(line)
+
+        return cleaned[:n]
+
     @property
     def is_loaded(self) -> bool:
         """Модель загружена."""
