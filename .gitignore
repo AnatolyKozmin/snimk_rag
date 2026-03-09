@@ -1,4 +1,4 @@
-README.md
+# Env
 .env
 .env.local
 .env.development.local
@@ -7,11 +7,53 @@ README.md
 .env.development
 .env.test
 .env.production
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
+*.env
 
-# Кэш моделей (скачивается вручную)
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+ENV/
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Модели (скачиваются вручную)
 ai_support_system/model_cache/
+model_cache/
+
+# Данные и БД
+ai_support_system/data/
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# faq_import (загружаемые файлы)
+faq_import/
+faq.xlsx
+faq.csv
+
+# Логи
+*.log
+logs/
+
+# Тесты
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
 
