@@ -1,34 +1,46 @@
 """Telegram бот на aiogram."""
+import asyncio
 import logging
 from typing import Optional
 
 import httpx
-from aiogram import Bot, Dispatcher, F, types
+from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
 from aiogram.types import Message
 
 logger = logging.getLogger(__name__)
 
-ESCALATION_MESSAGE = (
-    "Ваш вопрос передан администратору. "
-    "Мы ответим вам в ближайшее время."
-)
+# Повторы при 503 (сервис загружается): паузы в секундах
+RETRY_DELAYS = [15, 30, 45]
 
 
 async def get_answer_from_api(
-    api_url: str, question: str, telegram_user_id: Optional[int] = None
+    api_url: str,
+    question: str,
+    telegram_user_id: Optional[int] = None,
+    retry_on_503: bool = True,
 ) -> dict:
-    """Запрос к API бэкенда."""
+    """Запрос к API бэкенда. При 503 повторяет с паузами (15, 30, 45 сек)."""
     payload = {"question": question}
     if telegram_user_id is not None:
         payload["telegram_user_id"] = telegram_user_id
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.post(
-            f"{api_url}/ask",
-            json=payload,
-        )
-        response.raise_for_status()
-        return response.json()
+
+    for attempt in range(len(RETRY_DELAYS) + 1):
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{api_url}/ask",
+                json=payload,
+            )
+            if response.status_code == 200:
+                return response.json()
+            if response.status_code == 503 and retry_on_503 and attempt < len(RETRY_DELAYS):
+                delay = RETRY_DELAYS[attempt]
+                logger.info("API 503, повтор через %d сек (попытка %d)", delay, attempt + 1)
+                await asyncio.sleep(delay)
+                continue
+            response.raise_for_status()
+
+    raise httpx.HTTPStatusError("Service unavailable", request=response.request, response=response)
 
 
 def create_bot(token: str, api_url: str) -> tuple[Bot, Dispatcher]:
@@ -60,6 +72,9 @@ def create_bot(token: str, api_url: str) -> tuple[Bot, Dispatcher]:
             await message.answer("Пожалуйста, задайте вопрос.")
             return
 
+        # Показываем "печатает" пока ждём ответ
+        await message.bot.send_chat_action(message.chat.id, "typing")
+
         try:
             user_id = message.from_user.id if message.from_user else None
             data = await get_answer_from_api(api_url, question, user_id)
@@ -78,7 +93,7 @@ def create_bot(token: str, api_url: str) -> tuple[Bot, Dispatcher]:
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 503:
                 await message.answer(
-                    "Сервис загружается, попробуйте через минуту."
+                    "Сервис ещё загружается (модель ~2 мин). Попробуйте через минуту."
                 )
             else:
                 logger.exception("API request failed: %s", e)
