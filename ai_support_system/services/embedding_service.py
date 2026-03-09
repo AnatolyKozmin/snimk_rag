@@ -3,6 +3,7 @@ import logging
 from typing import List
 
 import numpy as np
+from sentence_transformers import SentenceTransformer
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,7 @@ class EmbeddingService:
     def _ensure_loaded(self):
         """Загрузить модель при первом обращении."""
         if self._model is None:
-            from sentence_transformers import SentenceTransformer
+            
 
             logger.info("Loading embedding model: %s", self._model_name)
             self._model = SentenceTransformer(self._model_name)

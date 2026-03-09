@@ -25,8 +25,15 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
     EMBEDDING_DIMENSION: int = 384  # all-MiniLM-L6-v2
 
+    # LLM RAG (Qwen2.5-1.5B)
+    USE_LLM_RAG: bool = True
+    LLM_MODEL: str = "Qwen/Qwen2.5-1.5B-Instruct"
+    LLM_TOP_K: int = 3  # сколько FAQ передавать в контекст LLM
+    MODEL_CACHE_DIR: Path = Path("./model_cache")  # кэш моделей (HF + sentence-transformers)
+
     # Thresholds
     SIMILARITY_THRESHOLD: float = 0.8
+    SIMILARITY_THRESHOLD_LLM: float = 0.6  # мин. score для попытки ответа через LLM
     CLUSTERING_EPS: float = 0.3  # DBSCAN eps
     CLUSTERING_MIN_SAMPLES: int = 2
 

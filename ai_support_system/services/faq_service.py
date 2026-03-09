@@ -1,4 +1,5 @@
 """Сервис FAQ - поиск ответов по вопросам."""
+import asyncio
 import logging
 from typing import List, Optional, Tuple
 
@@ -23,14 +24,35 @@ class FAQService:
         faiss_index: FAISSIndex,
         session_factory,
         similarity_threshold: float = 0.8,
+        similarity_threshold_llm: float = 0.6,
         cache_ttl: int = 300,
         cache_max_size: int = 1000,
+        llm_service=None,
+        use_llm_rag: bool = False,
+        llm_top_k: int = 3,
     ):
         self.embedding_service = embedding_service
         self.faiss_index = faiss_index
         self.session_factory = session_factory
         self.similarity_threshold = similarity_threshold
+        self.similarity_threshold_llm = similarity_threshold_llm
         self._cache = TTLCache(maxsize=cache_max_size, ttl=cache_ttl)
+        self._llm_service = llm_service
+        self._use_llm_rag = use_llm_rag and llm_service is not None
+        self._llm_top_k = llm_top_k
+
+    async def _get_entries_by_ids(self, ids: List[int]) -> List[FAQEntry]:
+        """Получить записи FAQ по списку ID."""
+        if not ids:
+            return []
+        async with self.session_factory() as session:
+            result = await session.execute(
+                select(FAQEntry).where(FAQEntry.id.in_(ids))
+            )
+            entries = list(result.scalars().all())
+        # Сохранить порядок по ids
+        id_to_entry = {e.id: e for e in entries}
+        return [id_to_entry[i] for i in ids if i in id_to_entry]
 
     async def search(
         self, question: str, k: int = 5
@@ -46,25 +68,63 @@ class FAQService:
             return self._cache[cache_key]
 
         embedding = self.embedding_service.embed(question)
-        results = self.faiss_index.search(embedding, k=k)
+        results = self.faiss_index.search(embedding, k=max(k, self._llm_top_k))
 
         if not results:
             self._cache[cache_key] = (None, 0.0, "pending")
             return None, 0.0, "pending"
 
         best_id, best_score = results[0]
-        if best_score < self.similarity_threshold:
+
+        # Ниже порога LLM — сразу pending
+        if best_score < self.similarity_threshold_llm:
             self._cache[cache_key] = (None, best_score, "pending")
             return None, best_score, "pending"
 
-        async with self.session_factory() as session:
-            result = await session.execute(
-                select(FAQEntry).where(FAQEntry.id == best_id)
-            )
-            entry = result.scalar_one_or_none()
-            if entry:
-                self._cache[cache_key] = (entry.answer, best_score, "answered")
-                return entry.answer, best_score, "answered"
+        # Получаем топ-k записей для контекста (для LLM или fallback)
+        top_ids = [r[0] for r in results[: self._llm_top_k]]
+        entries = await self._get_entries_by_ids(top_ids)
+
+        if not entries:
+            self._cache[cache_key] = (None, best_score, "pending")
+            return None, best_score, "pending"
+
+        # Высокая уверенность: ответ есть
+        if best_score >= self.similarity_threshold:
+            if self._use_llm_rag:
+                # RAG: LLM переформулирует ответ
+                faq_pairs = [(e.question, e.answer) for e in entries]
+                loop = asyncio.get_event_loop()
+                try:
+                    answer = await loop.run_in_executor(
+                        None,
+                        lambda: self._llm_service.generate_rag_answer(question, faq_pairs),
+                    )
+                    self._cache[cache_key] = (answer, best_score, "answered")
+                    return answer, best_score, "answered"
+                except Exception as e:
+                    logger.warning("LLM RAG failed, using raw FAQ: %s", e)
+            # Без LLM или при ошибке — сырой ответ
+            self._cache[cache_key] = (entries[0].answer, best_score, "answered")
+            return entries[0].answer, best_score, "answered"
+
+        # Средняя уверенность (0.6–0.8): пробуем LLM
+        if self._use_llm_rag:
+            faq_pairs = [(e.question, e.answer) for e in entries]
+            loop = asyncio.get_event_loop()
+            try:
+                answer = await loop.run_in_executor(
+                    None,
+                    lambda: self._llm_service.generate_rag_answer(question, faq_pairs),
+                )
+                # Проверяем, не сказал ли LLM "не знаю"
+                if "нет ответа" in answer.lower() or "обратитесь к администратору" in answer.lower():
+                    self._cache[cache_key] = (None, best_score, "pending")
+                    return None, best_score, "pending"
+                self._cache[cache_key] = (answer, best_score, "answered")
+                return answer, best_score, "answered"
+            except Exception as e:
+                logger.warning("LLM fallback failed: %s", e)
 
         self._cache[cache_key] = (None, best_score, "pending")
         return None, best_score, "pending"

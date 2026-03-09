@@ -16,15 +16,17 @@ services:
       - DATABASE_URL=sqlite+aiosqlite:///./data/faq.db
       - FAISS_INDEX_PATH=./data/faiss_index.bin
       - SIMILARITY_THRESHOLD=0.8
+      - USE_LLM_RAG=true
+      - HF_HOME=/root/.cache/huggingface
       - LOG_LEVEL=INFO
       - HF_TOKEN=${HF_TOKEN:-}
     restart: unless-stopped
     deploy:
       resources:
         limits:
-          memory: 4G
+          memory: 6G
         reservations:
-          memory: 2G
+          memory: 3G
 
   faq_bot:
     build: .

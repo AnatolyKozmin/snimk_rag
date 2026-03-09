@@ -4,6 +4,7 @@
 """
 import asyncio
 import logging
+import os
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -18,6 +19,7 @@ from services.clustering_service import ClusteringService
 from services.embedding_service import EmbeddingService
 from services.faq_service import FAQService
 from services.learning_service import LearningService
+from services.llm_service import LLMService
 from services.pending_service import PendingService
 from vectorstore.faiss_index import FAISSIndex
 
@@ -112,7 +114,12 @@ async def _background_init(app: FastAPI):
         embedding_service = app.state.embedding_service
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, embedding_service._ensure_loaded)
-        logger.info("Фоновая инициализация: модель загружена")
+        logger.info("Фоновая инициализация: модель эмбеддингов загружена")
+
+        if settings.USE_LLM_RAG and app.state.llm_service:
+            logger.info("Фоновая инициализация: загрузка LLM...")
+            await loop.run_in_executor(None, app.state.llm_service._ensure_loaded)
+            logger.info("Фоновая инициализация: LLM загружен")
 
         faiss_index = app.state.faiss_index
         session_factory = app.state.session_factory
@@ -142,6 +149,13 @@ async def lifespan(app: FastAPI):
     logger.info("Starting application...")
     app.state.ready = False
 
+    # Кэш моделей (для локального запуска; в Docker HF_HOME задаётся в env)
+    if "HF_HOME" not in os.environ:
+        cache_dir = str(settings.MODEL_CACHE_DIR.absolute())
+        os.environ["HF_HOME"] = cache_dir
+        os.environ["TRANSFORMERS_CACHE"] = cache_dir
+        os.environ["SENTENCE_TRANSFORMERS_HOME"] = cache_dir
+
     # Директория для данных
     settings.DATA_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -165,14 +179,28 @@ async def lifespan(app: FastAPI):
     faiss_index.load()
     app.state.faiss_index = faiss_index
 
+    # LLM (опционально)
+    llm_service = None
+    if settings.USE_LLM_RAG:
+        cache_dir = os.environ.get("HF_HOME")
+        llm_service = LLMService(
+            model_name=settings.LLM_MODEL,
+            cache_dir=cache_dir,
+        )
+    app.state.llm_service = llm_service
+
     # Сервисы
     app.state.faq_service = FAQService(
         embedding_service=embedding_service,
         faiss_index=faiss_index,
         session_factory=session_factory,
         similarity_threshold=settings.SIMILARITY_THRESHOLD,
+        similarity_threshold_llm=settings.SIMILARITY_THRESHOLD_LLM,
         cache_ttl=settings.CACHE_TTL_SECONDS,
         cache_max_size=settings.CACHE_MAX_SIZE,
+        llm_service=llm_service,
+        use_llm_rag=settings.USE_LLM_RAG,
+        llm_top_k=settings.LLM_TOP_K,
     )
     app.state.pending_service = PendingService(session_factory)
     app.state.learning_service = LearningService(
