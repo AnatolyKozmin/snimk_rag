@@ -8,7 +8,6 @@ services:
       - "8009:8000"
     volumes:
       - ./data:/app/data
-      - hf_cache:/root/.cache/huggingface
     environment:
       - API_HOST=0.0.0.0
       - API_PORT=8000
@@ -36,6 +35,3 @@ services:
     depends_on:
       - faq_api
     restart: unless-stopped
-
-volumes:
-  hf_cache:
