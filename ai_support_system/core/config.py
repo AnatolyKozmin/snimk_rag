@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     MODEL_CACHE_DIR: Path = Path("./model_cache")  # кэш моделей (HF + sentence-transformers)
 
     # Thresholds
-    SIMILARITY_THRESHOLD: float = 0.8
+    SIMILARITY_THRESHOLD: float = 0.75
     SIMILARITY_THRESHOLD_LLM: float = 0.6  # мин. score для попытки ответа через LLM
     CLUSTERING_EPS: float = 0.3  # DBSCAN eps
     CLUSTERING_MIN_SAMPLES: int = 2
